@@ -1,0 +1,157 @@
+{
+	"info": {
+		"_postman_id": "c4baf3c7-5922-4f92-af5a-dd149c18b9b4",
+		"name": "QuotaEnforcementBlogPost",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Sample Request",
+			"request": {
+				"auth": {
+					"type": "oauth2",
+					"oauth2": [
+						{
+							"key": "clientSecret",
+							"value": "{{CognitoAppClientSecret}}",
+							"type": "string"
+						},
+						{
+							"key": "clientId",
+							"value": "{{CognitoAppClientId}}",
+							"type": "string"
+						},
+						{
+							"key": "accessTokenUrl",
+							"value": "{{CognitoAccessTokenUrl}}",
+							"type": "string"
+						},
+						{
+							"key": "authUrl",
+							"value": "{{CognitoAuthUrl}}",
+							"type": "string"
+						},
+						{
+							"key": "grant_type",
+							"value": "authorization_code",
+							"type": "string"
+						},
+						{
+							"key": "redirect_uri",
+							"value": "http://localhost",
+							"type": "string"
+						},
+						{
+							"key": "client_authentication",
+							"value": "body",
+							"type": "string"
+						},
+						{
+							"key": "scope",
+							"value": "email openid profile aws.cognito.signin.user.admin",
+							"type": "string"
+						},
+						{
+							"key": "useBrowser",
+							"value": false,
+							"type": "boolean"
+						},
+						{
+							"key": "headerPrefix",
+							"value": "",
+							"type": "string"
+						},
+						{
+							"key": "tokenName",
+							"value": "Cognito",
+							"type": "string"
+						},
+						{
+							"key": "addTokenTo",
+							"value": "header",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "graphql",
+					"graphql": {
+						"query": "query MyQuery {\n  getMovie(title: \"King Kong\", year: 1933) {\n    info {\n      actors\n      directors\n      genres\n    }\n  }\n}",
+						"variables": ""
+					}
+				},
+				"url": {
+					"raw": "{{GraphQLUrl}}",
+					"host": [
+						"{{GraphQLUrl}}"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"auth": {
+		"type": "oauth2",
+		"oauth2": [
+			{
+				"key": "headerPrefix",
+				"value": "",
+				"type": "string"
+			},
+			{
+				"key": "addTokenTo",
+				"value": "header",
+				"type": "string"
+			}
+		]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "GraphQLUrl",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "CognitoAuthUrl",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "CognitoAccessTokenUrl",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "CognitoAppClientId",
+			"value": "",
+			"type": "default"
+		},
+		{
+			"key": "CognitoAppClientSecret",
+			"value": "",
+			"type": "default"
+		}
+	]
+}

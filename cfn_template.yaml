@@ -1,0 +1,524 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: A cloudformation template to deploy AWS resources. For more information refer to the README of the project. 
+#--------------------Parameters-----------------------------------------
+Parameters:
+  CognitoCallBackUrl:
+    Type: String
+    Default: http://localhost
+  CognitoLogOutUrl:
+    Type: String
+    Default: http://localhost
+  CognitoDomain:
+    Type: String
+    Default: quotablog
+  QuotaAttribute:
+    Type: String
+    Default: quota
+  VPC:
+    Description: "Select VPC"
+    Type: "AWS::EC2::VPC::Id"
+  SubnetA:
+    Description: "Select the first Private Subnet"
+    Type: "AWS::EC2::Subnet::Id"
+  SubnetB:
+    Description: "Select the second Private Subnet"
+    Type: "AWS::EC2::Subnet::Id"
+  NumShards:
+    Description: "Number of shards in the cluster."
+    Type: "Number"
+    Default: 1
+    MinValue: 1
+    MaxValue: 250
+  NumReplicas:
+    Description: "Number of replicas per shard."
+    Type: "Number"
+    Default: 1
+    MinValue: 0
+    MaxValue: 5
+  EngineVersion:
+    Description: 'Redis version'
+    Type: String
+    Default: '6.x'
+    AllowedValues:
+    - '3.2.6'
+    - '4.0.10'
+    - '5.0.0'
+    - '5.0.3'
+    - '5.0.4'
+    - '5.0.5'
+    - '5.0.6'
+    - '6.x'
+#-------------------Mappings-------------------------------------
+Mappings:
+  EngineVersionMap:
+    '3.2.6':
+      CacheParameterGroupFamily: 'redis3.2'
+    '4.0.10':
+      CacheParameterGroupFamily: 'redis4.0'
+    '5.0.0':
+      CacheParameterGroupFamily: 'redis5.0'
+    '5.0.3':
+      CacheParameterGroupFamily: 'redis5.0'
+    '5.0.4':
+      CacheParameterGroupFamily: 'redis5.0'
+    '5.0.5':
+      CacheParameterGroupFamily: 'redis5.0'
+    '5.0.6':
+      CacheParameterGroupFamily: 'redis5.0'
+    '6.x':
+      CacheParameterGroupFamily: 'redis6.x'
+#-------------------------Conditions-----------------------------
+Conditions:
+  HasClusterModeEnabled: !Not [!Equals [!Ref NumShards, 1]]
+  HasClusterModeDisabled: !Not [!Condition HasClusterModeEnabled]
+#------------------------DynamoDB------------------------------
+Resources:
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: title
+          AttributeType: S
+        - AttributeName: year
+          AttributeType: N
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      KeySchema:
+        - AttributeName: year
+          KeyType: HASH
+        - AttributeName: title
+          KeyType: RANGE
+#------------------------Cognito------------------------------
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      AliasAttributes:
+        - email
+      Schema:
+        - AttributeDataType: Number
+          Mutable: true
+          Name: !Ref QuotaAttribute
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref CognitoUserPool
+      AllowedOAuthFlows:
+        - code
+      GenerateSecret: true
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - aws.cognito.signin.user.admin
+        - profile
+      CallbackURLs:
+        - !Ref CognitoCallBackUrl
+      SupportedIdentityProviders: 
+        - COGNITO
+      LogoutURLs:
+        - !Ref CognitoLogOutUrl
+      ExplicitAuthFlows:
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
+        - ALLOW_CUSTOM_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      ReadAttributes:
+        - "address"
+        - "birthdate"
+        - !Sub "custom:${QuotaAttribute}"
+        - "email"
+        - "email_verified"
+        - "family_name"
+        - "gender"
+        - "given_name"
+        - "locale"
+        - "middle_name"
+        - "name"
+        - "nickname"
+        - "phone_number"
+        - "phone_number_verified"
+        - "picture"
+        - "preferred_username"
+        - "profile"
+        - "updated_at"
+        - "website"
+        - "zoneinfo"
+      WriteAttributes:
+        - "address"
+        - "birthdate"
+        - !Sub "custom:${QuotaAttribute}"
+        - "email"
+        - "family_name"
+        - "gender"
+        - "given_name"
+        - "locale"
+        - "middle_name"
+        - "name"
+        - "nickname"
+        - "phone_number"
+        - "picture"
+        - "preferred_username"
+        - "profile"
+        - "updated_at"
+        - "website"
+        - "zoneinfo"
+  CognitoUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref CognitoUserPool
+      Domain: !Sub "${AWS::StackName}-${CognitoDomain}"
+#----------------------------Lambda Functions----------------------------
+  LambdaAuthorizer:
+    Type: "AWS::Serverless::Function"
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.8
+      CodeUri: ./lambda_package.zip
+      Description: "Lambda function that serves as an authorizer with customm logic for AppSync"
+      MemorySize: 256
+      Timeout: 5
+      Role: !GetAtt LambdaAuthorizerRole.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - Ref: SubnetA
+          - Ref: SubnetB
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          APP_CLIENT_ID: !Ref CognitoUserPoolClient
+          USER_POOL_ID: !Ref CognitoUserPool
+          QUOTA_ATTRIBUTE: !Sub "custom:${QuotaAttribute}"
+          USER_POOL_DOMAIN: !Sub "${CognitoUserPoolDomain}.auth"
+          REDIS_HOST_URL: !GetAtt "ReplicationGroup.PrimaryEndPoint.Address"
+          REDIS_PORT: !GetAtt "ReplicationGroup.PrimaryEndPoint.Port"
+          SECRET_NAME: !Ref "RedisSecret"
+      Layers:
+        - !Ref AuthenticationLayer
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow Outbound Traffic for Lambda
+      VpcId: !Ref VPC
+      SecurityGroupEgress: 
+        - CidrIp: 0.0.0.0/0
+          Description: Outbound Rule that allows communication to Cognito
+          FromPort: 443
+          ToPort: 443
+          IpProtocol: tcp
+        - CidrIp: 0.0.0.0/0
+          Description: Outbound Rule that allows communication to Redis
+          FromPort: 6379
+          ToPort: 6379
+          IpProtocol: tcp
+  AppSyncPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LambdaAuthorizer.Arn
+      Action: lambda:InvokeFunction
+      Principal: appsync.amazonaws.com
+#-----------------------------Lambda Layers------------------------------
+  AuthenticationLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      Description: Lambda Layer for authorization logic
+      ContentUri: ./dependencies.zip
+      CompatibleRuntimes:
+        - python3.9
+        - python3.8
+#--------------------------------Redis-----------------------------------
+  CacheParameterGroup:
+    Type: "AWS::ElastiCache::ParameterGroup"
+    Properties:
+      CacheParameterGroupFamily:
+        !FindInMap [
+          EngineVersionMap,
+          !Ref EngineVersion,
+          CacheParameterGroupFamily,
+        ]
+      Description: !Ref "AWS::StackName"
+      Properties: !If [HasClusterModeEnabled, { "cluster-enabled": "yes" }, {}]
+  ReplicationGroup:
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Type: "AWS::ElastiCache::ReplicationGroup"
+    Properties:
+      LogDeliveryConfigurations:
+        - DestinationType: cloudwatch-logs
+          LogFormat: json
+          LogType: slow-log
+          DestinationDetails:
+            CloudWatchLogsDetails:
+              LogGroup: !Ref RedisCwLogGroup
+      ReplicationGroupDescription: !Ref "AWS::StackName"
+      AtRestEncryptionEnabled: true
+      AuthToken: !Sub "{{resolve:secretsmanager:${RedisSecret}::auth_token}}"
+      CacheNodeType: "cache.t2.micro"
+      CacheParameterGroupName: !Ref CacheParameterGroup
+      CacheSubnetGroupName: !Ref CacheSubnetGroup
+      Engine: redis
+      EngineVersion: !Ref EngineVersion
+      NumNodeGroups: !Ref NumShards
+      ReplicasPerNodeGroup: !Ref NumReplicas
+      PreferredMaintenanceWindow: "sat:07:00-sat:08:00"
+      SecurityGroupIds:
+        - !Ref CacheSecurityGroup
+      TransitEncryptionEnabled: true
+    UpdatePolicy:
+      UseOnlineResharding: true
+  CacheSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: cache
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+          Description: "Inbound rule to allow access from the lambda authorizer"
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 127.0.0.1/32
+          Description: "Egress Rule to deny any traffic beside localhost"
+  CacheSubnetGroup:
+    Type: "AWS::ElastiCache::SubnetGroup"
+    Properties:
+      Description: cache
+      SubnetIds:
+        - Ref: SubnetA
+        - Ref: SubnetB
+  RedisCwLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub "redis-${AWS::StackName}"
+      RetentionInDays: 90
+
+#----------------------------SecretManager--------------------------------
+  RedisSecret:
+    Type: "AWS::SecretsManager::Secret"
+    Properties:
+      Name: !Sub "RedisSecret-${AWS::StackName}"
+      Description: "This secret has a dynamically generated secret password to by used for Redus AUTH."
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "redis-auth"}'
+        GenerateStringKey: "auth_token"
+        PasswordLength: 30
+        ExcludeCharacters: '[]{}\/"!&#$^<>-'
+        ExcludePunctuation: True
+#--------------------------------Roles-----------------------------------
+  LambdaAuthorizerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref LambdaCWPermissionsPolicy
+        - !Ref LambdaSecretPermissionsPolicy
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+#-------------------------------Policies---------------------------------
+  LambdaCWPermissionsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'logs:CreateLogStream'
+              - 'logs:PutLogEvents'
+              - 'logs:DescribeLogStreams'
+              - 'logs:GetLogEvents'
+              - 'logs:CreateLogGroup'
+            Resource:
+              - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*'
+  LambdaSecretPermissionsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'secretsmanager:GetSecretValue'
+            Resource:
+              - !Ref RedisSecret
+#-----------------AppSync---------------------------
+  GraphQLApi:
+    Type: AWS::AppSync::GraphQLApi
+    Properties:
+      LambdaAuthorizerConfig:
+        AuthorizerUri: !GetAtt LambdaAuthorizer.Arn
+      AuthenticationType: AWS_LAMBDA
+      Name: !Sub "${AWS::StackName}-GraphQLApi"
+      LogConfig:
+        CloudWatchLogsRoleArn: !GetAtt DataSourceRole.Arn
+        ExcludeVerboseContent: true
+        FieldLogLevel: ERROR
+  DataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      DynamoDBConfig:
+        AwsRegion: !Ref AWS::Region
+        TableName: !Ref Table
+        UseCallerCredentials: false
+        Versioned: false
+      Name: DataSource
+      ServiceRoleArn: !GetAtt DataSourceRole.Arn
+      Type: AMAZON_DYNAMODB
+      ApiId: !GetAtt GraphQLApi.ApiId
+  GraphQLSchema:
+    Type: AWS::AppSync::GraphQLSchema
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      Definition: |
+        schema {
+          query: Query
+          mutation: Mutation
+        }
+
+        type Query {
+          getMovie(title: String!, year: Int!, info: movieInfoObjectInput): Movie
+        }
+
+        type Mutation {
+          addMovie(title: String!, year: Int!, info: movieInfoObjectInput): Movie
+        }
+
+        type Movie @model @searchable {
+          title: String!
+          year: Int!
+          info: movieInfoObjectType
+        }
+
+        type movieInfoObjectType {
+          directors: [String]
+          release_date: String
+          rating: Float
+          genres: [String]
+          image_url: String
+          plot: String
+          rank: Int
+          running_time_secs: Int
+          actors: [String]
+        }
+
+        input movieInfoObjectInput {
+          directors: [String]
+          release_date: String
+          rating: Float
+          genres: [String]
+          image_url: String
+          plot: String
+          rank: Int
+          running_time_secs: Int
+          actors: [String]
+        }
+  AddMovieResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      DataSourceName: !GetAtt DataSource.Name
+      FieldName: addMovie
+      Kind: UNIT
+      RequestMappingTemplate: |
+        {
+          "version": "2017-02-28",
+          "operation": "PutItem",
+          "key": {
+            "year": $util.dynamodb.toDynamoDBJson($ctx.args.year),
+            "title": $util.dynamodb.toDynamoDBJson($ctx.args.title),
+          },
+          "attributeValues": {
+            "info": $util.dynamodb.toDynamoDBJson($ctx.args.info),
+          },
+          "condition": {
+            "expression": "attribute_not_exists(#title) AND attribute_not_exists(#year)",
+            "expressionNames": {
+              "#title": "title",
+              "#year": "year"
+            },
+          },
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($context.result)
+      TypeName: Mutation
+  GetMovieResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      DataSourceName: !GetAtt DataSource.Name
+      FieldName: getMovie
+      Kind: UNIT
+      RequestMappingTemplate: |
+        {
+          "version": "2017-02-28",
+          "operation": "GetItem",
+          "key": {
+            "year": $util.dynamodb.toDynamoDBJson($ctx.args.year),
+            "title": $util.dynamodb.toDynamoDBJson($ctx.args.title),
+          },
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($context.result)
+      TypeName: Query
+  DataSourceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service: appsync.amazonaws.com
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-DataSourcePolicy"
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DeleteItem
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Table}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Table}/*"
+        - PolicyName: !Sub "${AWS::StackName}-CloudWatchPolicy"
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+Outputs:
+  GraphQLUrl:
+    Value: !GetAtt GraphQLApi.GraphQLUrl
+  DynamoDBTableName:
+    Value: !Ref Table
+  CognitoAppClientId: 
+    Value: !Ref CognitoUserPoolClient
+  CognitoUserPoolId:
+    Value: !Ref CognitoUserPool
+  CognitoAuthUrl:
+    Value: !Sub "https://${CognitoUserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/login"
+  CognitoAccessTokenUrl:
+    Value: !Sub "https://${CognitoUserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/oauth2/token"
