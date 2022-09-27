@@ -7,7 +7,7 @@ The backend is hosted on Amazon AppSync and uses GraphQL as the connector to the
 
 
 ## Blogpost URL
-[How to enforce user quota on AWS AppSync with Lambda authorizer](link)
+[How to enforce user quota on AWS AppSync with Lambda authorizer](https://aws.amazon.com/blogs/mobile/how-to-enforce-user-quota-on-aws-appsync-with-lambda-authorizer/)
 
 ## Architecture
 
