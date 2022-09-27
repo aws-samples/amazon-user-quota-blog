@@ -1,7 +1,6 @@
 #!/bin/bash
 
-### chmod +x destroy.sh 
-### ./deployment_scripts/destroy.sh appSyncDynamoDbLambdaAuthorizer isengard_gm eu-west-1
+### chmod +x destroy.sh
 
 STACK_NAME=${1:?"Enter the STACK_NAME for this deployment"}
 AWS_PROFILE=${2:?"Enter the AWS_PROFILE for this deployment"}
